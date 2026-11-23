@@ -96,19 +96,61 @@ Reglas clave del protocolo:
  
 ## 5. Arquitectura del módulo de prueba (`top_eeprom_test.v`)
  
-- **SDA open-drain:** nunca se fuerza un `1`; se suelta el bus.
-```verilog
-assign sda = sda_out ? 1'bz : 1'b0;
+Código [`src/top_eeprom_test.v`](Códigos/top_eeprom_test.v).
+ 
+### 5.1 Interfaz
+ 
+| Puerto | Dir. | Pin FPGA | Descripción |
+|---|:---:|:---:|---|
+| `clk` | in | — | Reloj principal de 27 MHz |
+| `resetn` | in | — | Reset asíncrono activo en bajo |
+| `sda` | inout | 23 | Datos I²C (open-drain) |
+| `scl` | out | 24 | Reloj I²C generado por el maestro |
+| `TXD` | out | 28 | UART de diagnóstico, 57600 8N1 |
+ 
+### 5.2 Parámetros de temporización
+ 
+| Constante | Valor | Significado |
+|---|---|---|
+| `DELAY_10MS` | 270 000 ciclos | Arranque y espera de $t_{WR}$ |
+| `I2C_HALF_BIT` | 135 ciclos (5 µs) | Duración de **cada sub-paso** del bus |
+| `UART_BIT_CNT` | 468 ciclos | Un bit UART a 57600 baudios |
+ 
+### 5.3 Estructura: dos niveles de máquina de estados
+ 
+1. **Sub-máquina de byte** (activa con `byte_active = 1`): envía o recibe 8 bits más el bit de ACK/NACK. Cada bit pasa por 4 sub-pasos de 5 µs:
+```text
+sub_step 0: SCL=0, colocar el bit en SDA (o soltar SDA si se lee)
+sub_step 1: SCL=1
+sub_step 2: muestrear SDA (dato leído, o ACK de la EEPROM)
+sub_step 3: SCL=0 y avanzar al siguiente bit
 ```
  
-- **FSM:**
-  1. `ST_BOOT_DELAY`: 10 ms de espera inicial (270 000 ciclos).
-  2. `ST_WR_*`: Byte Write de `0x47` ('G') en `0x00`.
-  3. `ST_EEPROM_WAIT`: 10 ms (**= $t_{WR}$ máx., sin margen: subir a 15–20 ms**).
-  4. `ST_RD_*`: Random Read de `0x00`, termina con NACK.
-  5. `ST_UART_*`: envío del resultado por TX a 57600 8N1.
----
+2. **FSM de alto nivel:** genera START, STOP y Repeated START, lanza la sub-máquina de byte, espera y reporta por UART.
+| Fase | Estados | Qué hace |
+|---|---|---|
+| Arranque | `ST_BOOT_DELAY` | Espera 10 ms |
+| Escritura | `ST_WR_START` → `ST_WR_CTRL` (0xA0) → `ST_WR_ADDR` (0x00) → `ST_WR_DATA` (0x47) → `ST_WR_STOP` | *Byte Write* |
+| Grabación | `ST_EEPROM_WAIT` | Espera de $t_{WR}$ |
+| Lectura | `ST_RD_START1` → `ST_RD_CTRL_W` → `ST_RD_ADDR` → `ST_RD_RESTART` → `ST_RD_CTRL_R` (0xA1) → `ST_RD_READ_BYTE` (NACK) → `ST_RD_STOP` | *Random Read* |
+| Reporte | `ST_UART_PREP` → `ST_UART_SEND` → `ST_DONE` | Envía `NO ACK` o `RD: X` |
  
+### 5.4 SDA open-drain
+ 
+El maestro nunca fuerza un `1`: o baja la línea o la suelta, y la pull-up la sube.
+ 
+```verilog
+assign sda = sda_out ? 1'bz : 1'b0;   // sda_out=1 -> suelta; 0 -> conduce a GND
+```
+ 
+### 5.5 Observaciones sobre el código (a corregir o tener presentes)
+ 
+- **Frecuencia real de SCL ≈ 50 kHz, no 100 kHz:** cada bit usa 4 sub-pasos de 5 µs (periodo de 20 µs). Está dentro de especificación (máximo 100 kHz), solo hay que documentarlo así.
+- **$t_{WR}$:** el comentario del código dice "≤ 5 ms", pero el datasheet indica 10 ms máx., y la espera es de exactamente 10 ms. Subir a 15–20 ms o usar *ACK polling*.
+- **Salida UART:** en el código pegado aparece `assign tTXD = txd_reg;`, pero el puerto se llama `TXD`. Debe ser `assign TXD = txd_reg;` (verificar que el archivo real lo tenga bien).
+- **Un solo `ack_error` para todo:** no distingue en qué byte falló el ACK. Conviene separar un flag por etapa.
+- **La UART imprime el byte crudo:** si se lee `0xFF` (memoria sin escribir), el terminal muestra un carácter ilegible. Imprimir el valor en **hexadecimal** hace obvio qué se leyó.
+
 ## 6. Avances
  
 | Etapa | Descripción | Herramientas | Estado |
