@@ -117,7 +117,7 @@ assign sda = sda_out ? 1'bz : 1'b0;
 | 2. Síntesis y P&R | `GW2AR-LV18EQ144PC8/I7` | Yosys + nextpnr-himbaechel + gowin_pack |  0 errores |
 | 3. Carga en FPGA | Programación SRAM por JTAG | openFPGALoader | 100 % |
 | 4. Detección I²C | `0xA0` + verificación de ACK | Bus I²C + UART (minicom) | `ACK OK` |
-| 5. Escritura / lectura | Byte Write → espera → Random Read | FSM I²C + UART | 🔧 En depuración |
+| 5. Escritura / lectura | Byte Write → espera → Random Read | FSM I²C + UART | En depuración |
 | 6. Integración SoC | Periférico mapeado en memoria | Verilog / bus del SoC | Pendiente |
  
 ---
